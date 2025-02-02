@@ -147,7 +147,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
 
     # Отклоняем файлы и выводим сообщение об ошибке
-    await update.message.reply_text("Нужно отправить только сжатые фото. Пожалуйста, отправь фото как изображение, а не как файл.")
+    await update.message.reply_text("Нужно отправить только сжатые фото. Пожалуйста, отправь фото как изображение(сжатое), а не как файл.")
 
 # Обработка нажатий на кнопки
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
