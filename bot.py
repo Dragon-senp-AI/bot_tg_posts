@@ -44,7 +44,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "Создать предложку":
         user_data[user_id] = {"photos": [], "message_ids": []}  # Инициализируем список фото и ID сообщений
         await update.message.reply_text(
-            "Привет!\nОтправь данные по этой форме:\nFandom: (Фендом косплея)\nCharacter: (Персонаж Косплея)\nCosplayer: (Ваш ник)\nLinks: (Ссылки на вас, к примеру ваш ТГК)",
+            "Привет!\nОтправь данные по этой форме:\nFandom: (Фендом косплея)\nCharacter: (Персонаж Косплея)\nCosplayer: (Ваш ник)\nLinks: (Ссылки на вас (именно ссылка), к примеру ваш ТГК)",
             reply_markup=None  # Убираем меню
         )
         return
