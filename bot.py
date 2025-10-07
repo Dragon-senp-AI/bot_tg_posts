@@ -2,6 +2,8 @@ import logging
 import os
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
+from config import BOT_TOKEN, CHANNEL_ID 
+
 
 # Настройка логирования
 logging.basicConfig(
@@ -235,7 +237,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     try:
         # Укажите токен вашего бота
-        application = ApplicationBuilder().token('8183574718:AAFGSr2m4izC27FseUco2iLf3Oz2Ui1FHGQ').build()
+        application = ApplicationBuilder().token(BOT_TOKEN).build()
         
         # Регистрируем обработчики
         application.add_handler(CommandHandler("start", start))
@@ -252,4 +254,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
