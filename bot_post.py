@@ -1,164 +1,168 @@
 import asyncio
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.enums.parse_mode import ParseMode
-from aiogram.filters import CommandStart
-from aiogram.client.default import DefaultBotProperties
+import logging
+from datetime import datetime
 from collections import defaultdict
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 
 API_TOKEN = "8490692991:AAEREn6006SgYrGVcNv-4FOWTVTNE_1C23Y"
-TARGET_CHANNEL = "@CosplayVibes"
+CHANNEL_ID = "@CosplayVibes"
 
-bot = Bot(
-    token=API_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN)
-)
+logging.basicConfig(level=logging.INFO)
+
+bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 
-# временное хранилище медиа-групп
-media_groups = defaultdict(list)
-# хранилище подготовленных постов
-user_posts = {}
+user_posts = defaultdict(dict)
+media_groups = {}  # временное хранилище для альбомов
 
 
-@dp.message(CommandStart())
-async def start(message: types.Message):
+def preview_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="edit_text")],
+        [InlineKeyboardButton(text="✅ Отправить пост", callback_data="send_post")],
+        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_post")]
+    ])
+
+
+@dp.message(F.text == "/start")
+async def cmd_start(message: types.Message):
     await message.answer(
-        "Привет! Отправь мне репост поста из @ruruposts (с фото и текстом). "
-        "Я соберу фото в один пост, позволю отредактировать текст и опубликовать в @CosplayVibes."
+        "Пришли репост из канала <b>https://t.me/ruruposts</b> — бот соберёт пост и покажет предпросмотр."
     )
 
 
-# перехват медиа-групп (альбомов)
-@dp.message(F.media_group_id)
-async def handle_album(message: types.Message):
+@dp.message(F.forward_from_chat)
+async def handle_forwarded(message: types.Message):
+    """Обрабатывает пересланные посты из канала"""
     user_id = message.from_user.id
-    media_groups[(user_id, message.media_group_id)].append(message)
 
-    await asyncio.sleep(1.5)  # дождаться, пока Telegram отправит все фото альбома
-    group = media_groups.pop((user_id, message.media_group_id), [])
+    # Альбом (медиагруппа)
+    if message.media_group_id:
+        mgid = message.media_group_id
+        group = media_groups.setdefault(mgid, {
+            "photos": [],
+            "text": message.caption or "",
+            "user_id": user_id,
+            "last_update": datetime.now(),
+        })
 
-    if not group:
+        if message.photo:
+            group["photos"].append(message.photo[-1].file_id)
+        group["last_update"] = datetime.now()
+    else:
+        # Одиночное фото
+        photos = [message.photo[-1].file_id] if message.photo else []
+        text = message.caption or "(без текста)"
+        user_posts[user_id] = {"photos": photos, "text": text}
+        await show_preview(user_id)
+
+
+async def show_preview(user_id: int):
+    """Показывает предпросмотр пользователю"""
+    post = user_posts.get(user_id)
+    if not post:
         return
 
-    first_msg = group[0]
-    if not first_msg.forward_from_chat or first_msg.forward_from_chat.username != "ruruposts":
-        await message.answer("Пожалуйста, пришли репост из канала @ruruposts.")
-        return
+    photos = post["photos"]
+    text = post["text"]
 
-    photos = [m.photo[-1].file_id for m in group]
-    caption = first_msg.caption or ""
-
-    user_posts[user_id] = {"photos": photos, "text": caption}
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="edit_text")],
-        [InlineKeyboardButton(text="✅ Отправить пост", callback_data="send_post")],
-        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
-    ])
-
-    media = []
-    for i, file_id in enumerate(photos):
-        if i == 0:
-            media.append(InputMediaPhoto(media=file_id, caption=caption or "(без текста)", parse_mode=ParseMode.MARKDOWN))
+    try:
+        if len(photos) > 1:
+            media = [
+                InputMediaPhoto(media=photos[0], caption=text, parse_mode=ParseMode.HTML)
+            ] + [InputMediaPhoto(media=p) for p in photos[1:]]
+            await bot.send_media_group(chat_id=user_id, media=media)
+            await bot.send_message(chat_id=user_id, text="📋 Предпросмотр поста:", reply_markup=preview_keyboard())
+        elif len(photos) == 1:
+            await bot.send_photo(chat_id=user_id, photo=photos[0], caption=text, reply_markup=preview_keyboard())
         else:
-            media.append(InputMediaPhoto(media=file_id))
-
-    # отправляем предпросмотр альбома
-    sent = await bot.send_media_group(chat_id=message.chat.id, media=media)
-    # добавляем кнопки под последним фото альбома
-    await bot.send_message(chat_id=message.chat.id, text="Предпросмотр поста:", reply_markup=kb)
-
-
-# одиночное фото
-@dp.message(F.photo & ~F.media_group_id)
-async def handle_single_photo(message: types.Message):
-    if not message.forward_from_chat or message.forward_from_chat.username != "ruruposts":
-        await message.answer("Пожалуйста, пришли репост из канала @ruruposts.")
-        return
-
-    photos = [message.photo[-1].file_id]
-    caption = message.caption or ""
-
-    user_posts[message.from_user.id] = {"photos": photos, "text": caption}
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="edit_text")],
-        [InlineKeyboardButton(text="✅ Отправить пост", callback_data="send_post")],
-        [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
-    ])
-
-    await message.answer_photo(
-        photo=photos[0],
-        caption=caption or "(без текста)",
-        reply_markup=kb
-    )
+            await bot.send_message(chat_id=user_id, text=text, reply_markup=preview_keyboard())
+    except Exception as e:
+        await bot.send_message(chat_id=user_id, text=f"⚠️ Ошибка предпросмотра: {e}")
 
 
 @dp.callback_query(F.data == "edit_text")
 async def edit_text(callback: types.CallbackQuery):
-    await callback.message.answer(
-        "Отправь новый текст поста (Markdown и [гиперссылки](https://example.com) поддерживаются):"
-    )
+    uid = callback.from_user.id
+    if uid not in user_posts:
+        await callback.message.answer("⚠️ Нет поста для редактирования.")
+        return
+    user_posts[uid]["editing"] = True
+    await callback.message.answer("✍️ Введите новый текст поста (HTML разрешён):")
     await callback.answer()
-    user_posts[callback.from_user.id]["editing"] = True
 
 
-@dp.message(F.text)
-async def save_new_text(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in user_posts and user_posts[user_id].get("editing"):
-        user_posts[user_id]["text"] = message.text
-        user_posts[user_id]["editing"] = False
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Отправить пост", callback_data="send_post")],
-            [InlineKeyboardButton(text="✏️ Изменить текст", callback_data="edit_text")],
-            [InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")]
-        ])
-
-        post = user_posts[user_id]
-        media = []
-        for i, file_id in enumerate(post["photos"]):
-            if i == 0:
-                media.append(InputMediaPhoto(media=file_id, caption=post["text"], parse_mode=ParseMode.MARKDOWN))
-            else:
-                media.append(InputMediaPhoto(media=file_id))
-
-        await bot.send_media_group(chat_id=message.chat.id, media=media)
-        await message.answer("Предпросмотр поста:", reply_markup=kb)
+@dp.message()
+async def handle_edit(message: types.Message):
+    uid = message.from_user.id
+    if uid in user_posts and user_posts[uid].get("editing"):
+        user_posts[uid]["text"] = message.text
+        user_posts[uid]["editing"] = False
+        await message.answer("✅ Текст обновлён.")
+        await show_preview(uid)
 
 
 @dp.callback_query(F.data == "send_post")
 async def send_post(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    post = user_posts.get(user_id)
+    uid = callback.from_user.id
+    post = user_posts.get(uid)
     if not post:
-        await callback.answer("Нет данных для отправки.", show_alert=True)
+        await callback.message.answer("⚠️ Нет поста для отправки.")
         return
 
-    media = []
-    for i, file_id in enumerate(post["photos"]):
-        if i == 0:
-            media.append(InputMediaPhoto(media=file_id, caption=post["text"], parse_mode=ParseMode.MARKDOWN))
+    photos, text = post["photos"], post["text"]
+
+    try:
+        if len(photos) > 1:
+            media = [
+                InputMediaPhoto(media=photos[0], caption=text, parse_mode=ParseMode.HTML)
+            ] + [InputMediaPhoto(media=p) for p in photos[1:]]
+            await bot.send_media_group(chat_id=CHANNEL_ID, media=media)
+        elif len(photos) == 1:
+            await bot.send_photo(chat_id=CHANNEL_ID, photo=photos[0], caption=text, parse_mode=ParseMode.HTML)
         else:
-            media.append(InputMediaPhoto(media=file_id))
+            await bot.send_message(chat_id=CHANNEL_ID, text=text, parse_mode=ParseMode.HTML)
 
-    await bot.send_media_group(chat_id=TARGET_CHANNEL, media=media)
-    await callback.message.answer("✅ Пост успешно опубликован в канале!")
+        await callback.message.answer("✅ Пост опубликован в канал.")
+        del user_posts[uid]
+    except Exception as e:
+        await callback.message.answer(f"⚠️ Ошибка публикации: {e}")
     await callback.answer()
-    user_posts.pop(user_id, None)
 
 
-@dp.callback_query(F.data == "cancel")
-async def cancel(callback: types.CallbackQuery):
-    user_posts.pop(callback.from_user.id, None)
-    await callback.message.answer("❌ Публикация отменена.")
+@dp.callback_query(F.data == "cancel_post")
+async def cancel_post(callback: types.CallbackQuery):
+    uid = callback.from_user.id
+    user_posts.pop(uid, None)
+    await callback.message.answer("❌ Пост отменён.")
     await callback.answer()
+
+
+async def check_albums():
+    """Следит за завершением получения всех фото в альбоме"""
+    while True:
+        now = datetime.now()
+        ready = []
+
+        for mgid, data in list(media_groups.items()):
+            if (now - data["last_update"]).total_seconds() > 2:
+                ready.append(mgid)
+
+        for mgid in ready:
+            data = media_groups.pop(mgid)
+            uid = data["user_id"]
+            user_posts[uid] = {"photos": data["photos"], "text": data["text"]}
+            await show_preview(uid)
+
+        await asyncio.sleep(2)
 
 
 async def main():
     print("Бот запущен...")
+    asyncio.create_task(check_albums())
     await dp.start_polling(bot)
 
 
